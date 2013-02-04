@@ -27,25 +27,25 @@ class UncentedKalmanFilter(object):
     def calculate_sigma_points(self):
         """Calculate the sigma sampling points"""
         # Estimate sigma points xsig and weights W
-        if self.has_initialized and not self.has_calculated_sigma_points:
-            self.x_sigma = np.array((1+2*self.Nx ) * [self.x]).T
-            self.W = np.array((1+2*self.Nx) *[0.33]) #Random W_0 value see article
-            for i in xrange(self.Nx):        
-    
-                # Calculate the point offsets (eq. 12 in article)
-                offset = np.linalg.cholesky((self.Nx/(1-self.W[0]))*self.P)[i].T
-                
-                self.x_sigma[:,i+1] +=  offset
-                self.x_sigma[:,i+self.Nx+1] -= offset
-        
-                self.W[i+1] = (1.0 - self.W[0]) / (2.0*self.Nx)
-                self.W[i+self.Nx+1] = (1.0 - self.W[0]) / (2.0*self.Nx)
-                
-            self.has_calculated_sigma_points = True
             
-    def initialize(self):
+        self.x_sigma = np.array((1+2*self.Nx ) * [self.x]).T
+        self.W = np.array((1+2*self.Nx) *[0.33]) #Random W_0 value see article
+        for i in xrange(self.Nx):        
+
+            # Calculate the point offsets (eq. 12 in article)
+            offset = np.linalg.cholesky((self.Nx/(1-self.W[0]))*self.P)[i].T
+            
+            self.x_sigma[:,i+1] +=  offset
+            self.x_sigma[:,i+self.Nx+1] -= offset
+    
+            self.W[i+1] = (1.0 - self.W[0]) / (2.0*self.Nx)
+            self.W[i+self.Nx+1] = (1.0 - self.W[0]) / (2.0*self.Nx)
+            
+        self.has_calculated_sigma_points = True
+            
+    def initialize(self, reinitialize = False):
         """docstring for initialize"""
-        if not self.has_initialized:
+        if not self.has_initialized or reinitialize:
             self.P = self.initial_covariance
             self.x = self.initial_state
             self.Nx = len(self.x)
