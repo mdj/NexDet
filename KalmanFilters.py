@@ -111,8 +111,109 @@ class UncentedKalmanFilter(object):
 
 class UncentedKalmanFilterTest(unittest.TestCase):
     def setUp(self):
-        pass
+        ip0 =  np.array([0, 0, -1.0/2.0 - 0.1])
+        hit_x = np.array([-0.00016567089886896337, -0.00039565159911799698, -0.0001225])
+        p = 10.0
+        p0 = p * ((hit_x-ip0) / np.linalg.norm(hit_x-ip0))
+
+        self.x = np.array([hit_x[0],hit_x[1],hit_x[2],p0[0],p0[1],p0[2], -1])
+        self.P = np.array([  [1.0, 0, 0, 0, 0, 0, 0],
+                        [0.0, 1, 0, 0, 0, 0, 0],
+                        [0.0, 0, 1, 0, 0, 0, 0],
+                        [0.0, 0, 0, 1, 0, 0, 0],
+                        [0.0, 0, 0, 0, 1, 0, 0],
+                        [0.0, 0, 0, 0, 0, 1, 0],
+                        [0.0, 0, 0, 0, 0, 0, 1]])    
+
+        self.Q = 0.1**2 * np.eye(len(self.x)) # Covariance of process
+        
+    def test_intialization(self):
+        """docstring for test_intialization"""
+        
+
+        # Create a new filter
+        kalman = UncentedKalmanFilter(self.x, self.P, self.Q)
+        kalman.initialize()
+        self.assertTrue(True)
+
+    def test_stepping(self):
+        """Run the kalman filter for one step"""
+        
+        kalman = UncentedKalmanFilter(self.x, self.P, self.Q)
+        
+        c = 299792458.0 # m/s speed of light
+        kappa = 1e-8 * c  # GeV/c T-1 m-1
+        
+        def getBfield(pos):
+            """Return B-field in Tesla for a given position"""
+            if pos[2] > 0.3:
+                return np.array([1.0, 0.0, 0.0]).T
+            else:
+                return np.array([0.0, 0.0, 0.0]).T
+
+        def Fmag(x, p, q, m):
+            """docstring for Bfield"""
+            return (kappa*q) * np.cross(p/m, getBfield(x))
+
+        def Vmag(x,p, q, m):
+            """docstring for Vmag"""
+            return p/m
 
 
+        def reco_rk4(param, dt=0.0001):
+            """Runge-Kutta 4'th order integration"""
+
+
+            # FIXME: tell when we have reached another measurement... ds?
+
+            x = param[0:3]
+            p = param[3:6]
+            q = param[6]
+            m = 0.001 # mass assumption
+            t = 0
+            ts = 0.02
+
+            while t < ts:
+                k1p = dt * Fmag(x,p, q, m)
+                k1x = dt * Vmag(x,p, q, m)
+
+                k2p = dt * Fmag(x + dt/2.0,p + 0.5*k1p, q, m)
+                k2x = dt * Vmag(x + 0.5*k1x, p + dt/2.0, q, m)
+
+                k3p = dt * Fmag(x + dt/2.0,p + 0.5*k2p, q, m)
+                k3x = dt * Vmag(x + 0.5*k2x, p + dt/2.0, q, m)
+
+                k4p = dt * Fmag(x + dt,p + k3p, q, m)
+                k4x = dt * Vmag(x + k3x, p, q, m)
+
+                dp = 1.0/6.0 * (k1p + 2*k2p + 2*k3p + k4p) # RK4
+                dx = 1.0/6.0 * (k1x + 2*k2x + 2*k3x + k4x) # RK4
+                p = p + dp
+                x = x + dx
+                t += dt
+
+            return np.array([x[0], x[1], x[2], p[0], p[1], p[2], q]).T
+
+
+        def predict_to_measurement(param):
+            """Runge-Kutta 4'th order integration"""
+            return np.array([param[0], param[1], param[2]])
+
+        
+        
+        # Define measurements
+        measurements = [
+                    np.array([-0.00041008907936890824, -0.00090066040845029503, 0.25787750000000004]),
+                    np.array([-0.00048417645399443179, -0.0001689257930013671, 0.33607749999999997]), 
+                    np.array([-0.00075518418439418286, 0.00607521176150302, 0.62207750000000006])
+                    ]                
+
+        measurement_noise = len(measurements) * [0.1 * np.eye(len(measurements[0]))] # Create a noise matrix for each measurement
+
+        # Run the propagator
+        x_final, P_final = kalman.propagate(measurements, measurement_noise, reco_rk4, predict_to_measurement)
+        
+        # todo compare x_final to the correct value and return assertion
+        
 if __name__ == '__main__':
 	unittest.main()
