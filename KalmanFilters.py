@@ -11,104 +11,136 @@ import sys
 import os
 import unittest
 import numpy as np
+        
 
 class UncentedKalmanFilter(object):
     """docstring for UncentedKalmanFilter"""
-    def __init__(self, initial_state, initial_covariance, process_noise):
+    def __init__(self):
         super(UncentedKalmanFilter, self).__init__()
-        self.initial_state = initial_state
-        self.initial_covariance = initial_covariance
-        self.process_noise = process_noise
 
-        self.has_initialized = False
-        self.has_calculated_sigma_points = False
-        self.step_i = 0
-        
-    def calculate_sigma_points(self):
-        """Calculate the sigma sampling points"""
-        # Estimate sigma points xsig and weights W
-            
-        self.x_sigma = np.array((1+2*self.Nx ) * [self.x]).T
-        self.W = np.array((1+2*self.Nx) *[0.33]) #Random W_0 value see article
-        for i in xrange(self.Nx):        
 
-            # Calculate the point offsets (eq. 12 in article)
-            offset = np.linalg.cholesky((self.Nx/(1-self.W[0]))*self.P)[i].T
-            
-            self.x_sigma[:,i+1] +=  offset
-            self.x_sigma[:,i+self.Nx+1] -= offset
-    
-            self.W[i+1] = (1.0 - self.W[0]) / (2.0*self.Nx)
-            self.W[i+self.Nx+1] = (1.0 - self.W[0]) / (2.0*self.Nx)
-            
-        self.has_calculated_sigma_points = True
-            
-    def initialize(self, reinitialize = False):
-        """docstring for initialize"""
-        if not self.has_initialized or reinitialize:
-            self.P = self.initial_covariance
-            self.x = self.initial_state
-            self.Nx = len(self.x)
-            self.Q = self.process_noise
-            
-            self.has_initialized = True
-            self.calculate_sigma_points()
-        
-    def unscented_transform(self, func, sigmas, Wm, Wc, n, R):
-        """Uncented transformation"""
+    def step(self, fstate, x, P, hmeas, z, Q, R, aux = None):
+        """Everything in one go"""
 
-        L = np.size(sigmas,1)
-        y = np.zeros([n,1]).T
-        Y = np.zeros([n,L])
+        L=x.shape[0];                                 #numer of states
+        m=z.shape[0];                                 #numer of measurements
 
+        alpha=1e-3;                                 #default, tunable
+        ki=0;                                       #default, tunable
+        beta=2;                                     #default, tunable
+        lam=alpha**2*(L+ki)-L;                    #scaling factor
+        c=L+lam;                                 #scaling factor
+        Wm =   0.5/c+np.zeros([1,2*L+1])
+        Wm[0,0] = lam/c
+        # print Wm
+        # Wm= [lam/c, 0.5/c+np.zeros([1,2*L])];           #weights for means
+        Wc=Wm;
+        Wc[0]=Wc[0]+(1-alpha**2+beta);               #weights for covariance
+        c=np.sqrt(c);
+        # print c
+        X=self.sigmas(x,P,c);                            #sigma points around x
+        [x1,X1,P1,X2]=self.ut(fstate,X,Wm,Wc,L,Q, aux);          #unscented transformation of process
+
+        ## X1=sigmas(x1,P1,c);                         #sigma points around x1
+        ## X2=X1-x1(:,ones(1,size(X1,2)));             #deviation of X1
+        [z1,Z1,P2,Z2]=self.ut(hmeas,X1,Wm,Wc,m,R, aux);       #unscented transformation of measurments
+
+
+        P12=np.dot(np.dot(X2,np.diag(Wc[0])),Z2.T)                        #transformed cross-covariance
+        K=np.dot(P12,np.linalg.inv(P2))
+
+        x=x1+np.dot(K,(z-z1))                              #state update
+        P=P1-np.dot(K,P12.T)                                #covariance update
+
+        # r = K*(z-z1);
+        # chi2 = (r'*inv(P)*r)
+        return x, P
+
+    def ut(self, f, X, Wm, Wc, n, R, aux):
+        """
+        %Input:
+        %        f: nonlinear map
+        %        X: sigma points
+        %       Wm: weights for mean
+        %       Wc: weights for covraiance
+        %        n: numer of outputs of f
+        %        R: additive covariance
+        %Output:
+        %        y: transformed mean
+        %        Y: transformed smapling points
+        %        P: transformed covariance
+        %       Y1: transformed deviations
+
+        L=size(X,2);
+        y=zeros(n,1);
+        Y=zeros(n,L);
+        for k=1:L            
+            Y(:,k)=f(X(:,k));       
+            y=y+Wm(k)*Y(:,k);       
+        end
+        Y1=Y-y(:,ones(1,L));
+        P=Y1*diag(Wc)*Y1'+R;%Unscented Transformation
+        %Input:
+        %        f: nonlinear map
+        %        X: sigma points
+        %       Wm: weights for mean
+        %       Wc: weights for covraiance
+        %        n: numer of outputs of f
+        %        R: additive covariance
+        %Output:
+        %        y: transformed mean
+        %        Y: transformed smapling points
+        %        P: transformed covariance
+        %       Y1: transformed deviations
+
+        L=size(X,2);
+        y=zeros(n,1);
+        Y=zeros(n,L);
+        for k=1:L            
+            Y(:,k)=f(X(:,k));       
+            y=y+Wm(k)*Y(:,k);       
+        end
+        Y1=Y-y(:,ones(1,L));
+        P=Y1*diag(Wc)*Y1'+R;"""
+
+        L=X.shape[1]
+        y=np.zeros([n,1])
+        Y=np.zeros([n,L])
+        # print y
         for k in xrange(L):
-            Y[:,k] = func(sigmas.T[k])
-            y += Wm[k] * Y[:,k] # Calculate weighted average from each sigma point
-
-
-        Y1 = Y - y.T
-        P = np.dot(np.dot(Y1, np.diag(Wc)), Y1.T) + R
-        return y,Y,P,Y1
-        
-    def step(self, measurement, measurement_noise, prediction_function, measurement_function):
-        """docstring for compute"""
-        if not self.has_initialized:
-            self.initialize()
-        
-        self.z = measurement
-        self.Nm = len(self.z)
-        
-        self.R = measurement_noise
-        
-        # Run prediction
-        x1, X1, P1, X2 = self.unscented_transform(prediction_function, self.x_sigma, self.W, self.W, self.Nx, self.Q)
-        
-        # Run map to measurement 
-        z1, Z1,  P2, Z2 = self.unscented_transform(measurement_function, X1, self.W, self.W, self.Nm, self.R)
-        
-        P12 = np.dot(np.dot(X2,np.diag(self.W)),Z2.T) # transformed cross-covariance
-        K = np.dot(P12, np.linalg.inv(P2)) 
-        x = x1 + np.dot( K ,(self.z-z1).T).T # state update
-        self.x = x[0] #back to vector form...
-        self.P = P1 - np.dot(K,P12.T) # covariance update
-
-        self.r = self.z - z1 # Residual
-        print self.r
-        print self.z, z1
-        print self.x
-        
-        self.step_i += 1
-        
-        return self.x, self.P
-    
-    def propagate(self, measurements, measurement_noise_vector, prediction_function, measurement_function):
-        """docstring for propagate"""
-        for i,z in enumerate(measurements):
-            self.step(z, measurement_noise_vector[i], prediction_function, measurement_function)
+            Y[:,k]= np.array([f(X[:,k], aux)])
+            y =  y +  np.array([Wm[:,k][0] * Y[:,k]]).T
             
-        return self.x, self.P
+        Y1 = Y - np.tile(y, (1,L))
+        P = np.dot(np.dot(Y1,np.diag(Wc[0])), Y1.T) + R
+        # print y,Y,P,Y1
+        return y, Y, P, Y1
+    
 
+    def sigmas(self, x, P, c):
+        
+        """
+                sigmas(x,P,c)
+                %Sigma points around reference point
+                %Inputs:
+                %       x: reference point
+                %       P: covariance
+                %       c: coefficient
+                %Output:
+                %       X: Sigma points
+                A = c*chol(P)';
+                Y = x(:,ones(1,numel(x)));
+                X = [x Y+A Y-A];
+        """
+    
+        A = c * np.linalg.cholesky(P).T
+        Y = np.tile(x, (1,len(x)))
+        X =  np.concatenate((x,Y+A, Y-A), axis=1)
 
+        return X
+        
+        
+        
 class UncentedKalmanFilterTest(unittest.TestCase):
     def setUp(self):
         ip0 =  np.array([0, 0, -1.0/2.0 - 0.1])
@@ -131,89 +163,111 @@ class UncentedKalmanFilterTest(unittest.TestCase):
         """docstring for test_intialization"""
         
 
-        # Create a new filter
-        kalman = UncentedKalmanFilter(self.x, self.P, self.Q)
-        kalman.initialize()
-        self.assertTrue(True)
 
-    def test_stepping(self):
-        """Run the kalman filter for one step"""
+        # clc;
+        n=3      #number of state
+        q=0.1    #std of process 
+        r=0.1    #std of measurement
+        Q=q**2* np.eye(n) # covariance of process
+        self.assertEqual(Q.shape, (3,3))
+
+        R=r**2        #covariance of measurement  
+
+        def f(x, aux=None): return np.array([x[1],x[2],0.05*x[0]*(x[1]+x[2])]) # nonlinear state equations
+        def h(x, aux=None): return np.array([x[0]]) # Measurement Function
         
-        kalman = UncentedKalmanFilter(self.x, self.P, self.Q)
+        s = np.array([[0,0,1]]).T
+        self.assertEqual(s.shape, (3,1))
         
-        c = 299792458.0 # m/s speed of light
-        kappa = 1e-8 * c  # GeV/c T-1 m-1
+        x = s + q * np.random.randn(3,1)
+        self.assertEqual(x.shape, (3,1))
+
+        P = np.eye(n)
+        self.assertEqual(P.shape, (3,3))
         
-        def getBfield(pos):
-            """Return B-field in Tesla for a given position"""
-            if pos[2] > 0.3:
-                return np.array([1.0, 0.0, 0.0]).T
-            else:
-                return np.array([0.0, 0.0, 0.0]).T
+        N=50
+        xV = np.zeros([n,N])
+        sV = np.zeros([n,N])
+        # print sV.shape
+        zV = np.zeros([N,1])
 
-        def Fmag(x, p, q, m):
-            """docstring for Bfield"""
-            return (kappa*q) * np.cross(p/m, getBfield(x))
-
-        def Vmag(x,p, q, m):
-            """docstring for Vmag"""
-            return p/m
-
-
-        def reco_rk4(param, dt=0.0001):
-            """Runge-Kutta 4'th order integration"""
-
-
-            # FIXME: tell when we have reached another measurement... ds?
-
-            x = param[0:3]
-            p = param[3:6]
-            q = param[6]
-            m = 0.001 # mass assumption
-            t = 0
-            ts = 0.02
-
-            while t < ts:
-                k1p = dt * Fmag(x,p, q, m)
-                k1x = dt * Vmag(x,p, q, m)
-
-                k2p = dt * Fmag(x + dt/2.0,p + 0.5*k1p, q, m)
-                k2x = dt * Vmag(x + 0.5*k1x, p + dt/2.0, q, m)
-
-                k3p = dt * Fmag(x + dt/2.0,p + 0.5*k2p, q, m)
-                k3x = dt * Vmag(x + 0.5*k2x, p + dt/2.0, q, m)
-
-                k4p = dt * Fmag(x + dt,p + k3p, q, m)
-                k4x = dt * Vmag(x + k3x, p, q, m)
-
-                dp = 1.0/6.0 * (k1p + 2*k2p + 2*k3p + k4p) # RK4
-                dx = 1.0/6.0 * (k1x + 2*k2x + 2*k3x + k4x) # RK4
-                p = p + dp
-                x = x + dx
-                t += dt
-
-            return np.array([x[0], x[1], x[2], p[0], p[1], p[2], q]).T
-
-
-        def predict_to_measurement(param):
-            """Runge-Kutta 4'th order integration"""
-            return np.array([param[0], param[1], param[2]])
+        self.assertEqual(xV.shape, (n,N))
+        self.assertEqual(sV.shape, (n,N))
+        self.assertEqual(zV.shape, (N,1))
+        
+        # # Create a new filter
+        kalman = UncentedKalmanFilter()
+        # kalman.initialize()
+    
+        for k in xrange(1,N):
+            z = h(s) + r * np.random.randn()
+            sV[:,k] = s.T[0]
+            zV[k] = z
+            x, P = kalman.step(f, x, P, h, z, Q, R) #step(z, R, f, h)
+            # print "x", x
+            # print "z", z
+            xV[:,k] = x.T[0]
+            s = f(s) + q*np.random.randn()
+            
+        try: # If we have ROOT install try plotting with it
+            from ROOT import TCanvas, TGraph, kBlue, kGreen
+        
+            xVx = TGraph()
+            xVy = TGraph()
+            xVz = TGraph()
+            xVx.SetLineColor(kGreen)
+            xVy.SetLineColor(kGreen)
+            xVz.SetLineColor(kGreen)
+            
+            sVx = TGraph()
+            sVy = TGraph()
+            sVz = TGraph()
+            sVx.SetLineColor(kBlue)
+            sVy.SetLineColor(kBlue)
+            sVz.SetLineColor(kBlue)
+        
+            zVx = TGraph()
+            # zVx.SetLineColor(kBlue)
+            zVx.SetLineStyle(3)
+            
+            for i,j in enumerate(xV[0]):
+                zVx.SetPoint(i+1, i+1, zV[i])
+                
+                xVx.SetPoint(i+1, i+1, xV[0][i])
+                xVy.SetPoint(i+1, i+1, xV[1][i])
+                xVz.SetPoint(i+1, i+1, xV[2][i])
+        
+                sVx.SetPoint(i+1, i+1, sV[0][i])
+                sVy.SetPoint(i+1, i+1, sV[1][i])
+                sVz.SetPoint(i+1, i+1, sV[2][i])
+                
+            c = TCanvas("unittest")
+            c.Divide(1,3)
+        
+            c.cd(1)
+            sVx.Draw("ALP")
+            xVx.Draw("LP")
+            zVx.Draw("LP")
+            
+            c.cd(2)
+            sVy.Draw("ALP")
+            xVy.Draw("LP")
+        
+            c.cd(3)
+            sVz.Draw("ALP")
+            xVz.Draw("LP")
+                
+            raw_input("Done..")
+        except:
+            print "Failed something with ROOT plotting"
+                
+        
+        
+        return self.assertTrue(True)
 
         
         
-        # Define measurements
-        measurements = [
-                    np.array([-0.00041008907936890824, -0.00090066040845029503, 0.25787750000000004]),
-                    np.array([-0.00048417645399443179, -0.0001689257930013671, 0.33607749999999997]), 
-                    np.array([-0.00075518418439418286, 0.00607521176150302, 0.62207750000000006])
-                    ]                
-
-        measurement_noise = len(measurements) * [0.1 * np.eye(len(measurements[0]))] # Create a noise matrix for each measurement
-
-        # Run the propagator
-        x_final, P_final = kalman.propagate(measurements, measurement_noise, reco_rk4, predict_to_measurement)
         
-        # todo compare x_final to the correct value and return assertion
         
 if __name__ == '__main__':
 	unittest.main()
