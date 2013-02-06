@@ -3,6 +3,8 @@
 """
 KalmanFilters.py
 
+
+
 Created by Morten Dam Jørgensen on 2013-02-04.
 Copyright (c) 2013 Niels Bohr Institute, Copenhagen. All rights reserved.
 """
@@ -14,7 +16,10 @@ import numpy as np
         
 
 class UncentedKalmanFilter(object):
-    """docstring for UncentedKalmanFilter"""
+    """
+    Implementation based on http://www.mathworks.com/matlabcentral/fileexchange/18217-learning-the-unscented-kalman-filter
+    
+    """
     def __init__(self):
         super(UncentedKalmanFilter, self).__init__()
 
